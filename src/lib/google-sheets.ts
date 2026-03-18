@@ -1,7 +1,7 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 
-// Interfaces for our data
+// Interfaces
 export interface UserRow {
     DNI: string;
     'NOMBRES COMPLETOS': string;
@@ -16,12 +16,10 @@ export interface UserRow {
 }
 
 export interface BaseRow {
-    // Define structure based on requirements later
     [key: string]: any;
 }
 
-// Singleton for Auth
-// robust key cleaning for Vercel env vars
+// 🔐 FIX PRIVATE KEY (Vercel)
 const privateKey = process.env.GOOGLE_PRIVATE_KEY
     ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n').replace(/"/g, '')
     : undefined;
@@ -36,16 +34,18 @@ const serviceAccountAuth = new JWT({
 });
 
 export const auth = serviceAccountAuth;
-export const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID || '', serviceAccountAuth);
+export const doc = new GoogleSpreadsheet(
+    process.env.GOOGLE_SHEET_ID || '',
+    serviceAccountAuth
+);
 
+// Cache doc
 let lastDocLoad = 0;
-const DOC_CACHE_TTL = 10000; // 10 seconds
+const DOC_CACHE_TTL = 10000;
 
 export async function loadDoc() {
     const now = Date.now();
-    if (now - lastDocLoad < DOC_CACHE_TTL) {
-        return;
-    }
+    if (now - lastDocLoad < DOC_CACHE_TTL) return;
 
     let retries = 3;
     while (retries > 0) {
@@ -57,33 +57,58 @@ export async function loadDoc() {
             retries--;
             console.warn(`loadDoc failed, retries left: ${retries}`, e);
             if (retries === 0) throw e;
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
     }
 }
 
+// 👇 IMPORTANTE (si lo usas)
 import { UserCache } from './user-cache';
 
-export async function getUserByCredentials(username: string, password: string): Promise<UserRow | null> {
+// 🔥 LOGIN FIXED
+export async function getUserByCredentials(
+    username: string,
+    password: string
+): Promise<UserRow | null> {
+
+    console.log("LOGIN TRY:", { username, password });
+
     const cache = UserCache.getInstance();
     await cache.ensureInitialized();
 
-    // We fetch fresh rows specifically for login to ensure token write works on current state
-    await loadDoc(); // Refresh doc metadata
+    await loadDoc();
     const sheet = doc.sheetsByTitle['USUARIOS'];
+
     if (!sheet) throw new Error('Hoja USUARIOS no encontrada');
+
     const rows = await sheet.getRows();
 
-    const userRow = rows.find(row => row.get('USER') === username && row.get('CLAVE') === password);
+    // 🔥 DEBUG ROWS
+    rows.forEach(row => {
+        console.log("ROW:", {
+            USER: row.get('USER'),
+            CLAVE: row.get('CLAVE'),
+        });
+    });
+
+    // ✅ FIX CON TRIM
+    const userRow = rows.find(row =>
+        row.get('USER')?.toString().trim() === username.trim() &&
+        row.get('CLAVE')?.toString().trim() === password.trim()
+    );
+
+    console.log("USER FOUND:", userRow ? "YES" : "NO");
 
     if (!userRow) return null;
 
-    // Generate and save new unique session token
-    const newToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    // 🔐 TOKEN
+    const newToken =
+        Math.random().toString(36).substring(2) +
+        Date.now().toString(36);
+
     userRow.set('SESSION_TOKEN', newToken);
     await userRow.save();
 
-    // Trigger cache update so other threads see the new token faster
     await cache.refresh();
 
     return {
@@ -100,9 +125,13 @@ export async function getUserByCredentials(username: string, password: string): 
     };
 }
 
-export async function checkSessionToken(username: string, token: string): Promise<boolean> {
+// 🔐 VALIDAR TOKEN
+export async function checkSessionToken(
+    username: string,
+    token: string
+): Promise<boolean> {
     const cache = UserCache.getInstance();
-    await cache.ensureInitialized(); // Uses 15s TTL
+    await cache.ensureInitialized();
 
     const userRow = cache.findUser(username);
     if (!userRow) return false;
@@ -111,6 +140,7 @@ export async function checkSessionToken(username: string, token: string): Promis
     return currentToken === token;
 }
 
+// 📊 BASE DISPONIBLE
 export async function getAvailableBase(limit: number = 10, assignedUser: string) {
     await loadDoc();
     const sheet = doc.sheetsByTitle['BASE'];
@@ -118,20 +148,17 @@ export async function getAvailableBase(limit: number = 10, assignedUser: string)
 
     const rows = await sheet.getRows();
 
-    // Filter for unassigned rows (assuming column 'ASIGNADO' exists and is empty for available rows)
-    // Also check if 'ASIGNADO' header exists, if not maybe we need to define it.
-    // We assume the sheet headers are: [DATA_COLUMNS..., 'ASIGNADO']
-
-    const availableRows = rows.filter(row => !row.get('ASIGNADO') || row.get('ASIGNADO') === '');
+    const availableRows = rows.filter(row =>
+        !row.get('ASIGNADO') || row.get('ASIGNADO') === ''
+    );
 
     const assignedData: any[] = [];
 
-    // Take up to 'limit' rows
     for (let i = 0; i < Math.min(limit, availableRows.length); i++) {
         const row = availableRows[i];
+
         row.set('ASIGNADO', assignedUser);
-        // Add timestamp if needed? row.set('FECHA_ASIGNACION', new Date().toISOString());
-        await row.save(); // Save one by one (or could use sheet.saveUpdatedCells() for batch if optimized)
+        await row.save();
 
         assignedData.push(row.toObject());
     }
@@ -139,14 +166,17 @@ export async function getAvailableBase(limit: number = 10, assignedUser: string)
     return assignedData;
 }
 
+// 📊 DATA ASIGNADA
 export async function getAssignedData(user: string) {
     await loadDoc();
     const sheet = doc.sheetsByTitle['BASE'];
-    if (!sheet) return []; // Or throw error
+    if (!sheet) return [];
 
     const rows = await sheet.getRows();
-    // Filter where ASIGNADO == user
-    const userRows = rows.filter(row => row.get('ASIGNADO') === user);
+
+    const userRows = rows.filter(row =>
+        row.get('ASIGNADO')?.toString().trim() === user.trim()
+    );
 
     return userRows.map(row => row.toObject());
 }
