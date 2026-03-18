@@ -98,3 +98,32 @@ export async function getUserByCredentials(
         return null;
     }
 }
+// 🔐 VALIDAR TOKEN (NECESARIO PARA SESSION)
+export async function checkSessionToken(
+    username: string,
+    token: string
+): Promise<boolean> {
+
+    try {
+        await loadDoc();
+
+        const sheet = doc.sheetsByTitle['USUARIOS'];
+        if (!sheet) return false;
+
+        const rows = await sheet.getRows();
+
+        const userRow = rows.find(row =>
+            row.get('USER')?.toString().trim() === username.trim()
+        );
+
+        if (!userRow) return false;
+
+        const currentToken = userRow.get('SESSION_TOKEN');
+
+        return currentToken === token;
+
+    } catch (error) {
+        console.error("CHECK TOKEN ERROR:", error);
+        return false;
+    }
+}
