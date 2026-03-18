@@ -1,30 +1,47 @@
+import { NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { JWT } from 'google-auth-library';
 import { Readable } from 'stream';
 
 const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
 
+const privateKey = process.env.GOOGLE_PRIVATE_KEY
+    ?.replace(/\\n/g, '\n')
+    .replace(/"/g, '');
+
 const auth = new JWT({
     email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    key: process.env.GOOGLE_PRIVATE_KEY?.split(String.fromCharCode(92) + 'n').join('\n'),
+    key: privateKey,
     scopes: SCOPES,
 });
 
 const drive = google.drive({ version: 'v3', auth });
 
-export async function uploadProfilePicture(file: File, username: string): Promise<string> {
+export async function POST(req: Request) {
     try {
-        // Fallback hardcoded for debugging
-        const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID || '1TjAt7TMjPsLQLL0qpfxPbxdV8WgPwdiI';
-        if (!folderId) throw new Error('GOOGLE_DRIVE_FOLDER_ID not set');
+        const formData = await req.formData();
 
-        // Convert File to Buffer/Stream
+        const file = formData.get('file') as File;
+        const username = formData.get('username') as string;
+
+        if (!file || !username) {
+            return NextResponse.json({ error: 'Faltan datos' }, { status: 400 });
+        }
+
+        const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+        if (!folderId) {
+            throw new Error('GOOGLE_DRIVE_FOLDER_ID no configurado');
+        }
+
+        // Convertir archivo
         const bytes = await file.arrayBuffer();
         const buffer = Buffer.from(bytes);
+
         const stream = new Readable();
         stream.push(buffer);
         stream.push(null);
 
+        // Subir a Drive
         const response = await drive.files.create({
             requestBody: {
                 name: `${username}_profile.jpg`,
@@ -34,27 +51,30 @@ export async function uploadProfilePicture(file: File, username: string): Promis
                 mimeType: file.type,
                 body: stream,
             },
-            fields: 'id, webContentLink, webViewLink',
+            fields: 'id, webViewLink',
         });
 
         const fileId = response.data.id;
-        if (!fileId) throw new Error('Upload failed');
+        if (!fileId) throw new Error('Upload fallido');
 
-        // Make file public so it can be viewed in the app
+        // Hacer público
         await drive.permissions.create({
-            fileId: fileId,
+            fileId,
             requestBody: {
                 role: 'reader',
                 type: 'anyone',
             },
         });
 
-        // Construct a direct viewable link (thumbnail link is better for avatars usually, but webContentLink works)
-        // Using a trick for direct display if needed, or just standard google drive display
-        return response.data.webContentLink || '';
+        const url = `https://drive.google.com/uc?id=${fileId}`;
+
+        return NextResponse.json({ url });
+
     } catch (error: any) {
-        console.error('Drive upload error:', error);
-        console.error('Error details:', error.response?.data);
-        throw new Error(`Fallo subida a Drive: ${error.message}`);
+        console.error('UPLOAD ERROR:', error);
+        return NextResponse.json(
+            { error: error.message },
+            { status: 500 }
+        );
     }
 }
