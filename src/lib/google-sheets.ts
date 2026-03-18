@@ -19,7 +19,7 @@ export interface BaseRow {
     [key: string]: any;
 }
 
-// 🔐 FIX PRIVATE KEY (Vercel)
+// 🔐 FIX PRIVATE KEY (IMPORTANTE PARA VERCEL)
 const privateKey = process.env.GOOGLE_PRIVATE_KEY
     ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n').replace(/"/g, '')
     : undefined;
@@ -33,7 +33,6 @@ const serviceAccountAuth = new JWT({
     ],
 });
 
-export const auth = serviceAccountAuth;
 export const doc = new GoogleSpreadsheet(
     process.env.GOOGLE_SHEET_ID || '',
     serviceAccountAuth
@@ -62,67 +61,71 @@ export async function loadDoc() {
     }
 }
 
-// 👇 IMPORTANTE (si lo usas)
+// 👇 CACHE
 import { UserCache } from './user-cache';
 
-// 🔥 LOGIN FIXED
+// 🔥 LOGIN FINAL
 export async function getUserByCredentials(
     username: string,
     password: string
 ): Promise<UserRow | null> {
 
-    console.log("LOGIN TRY:", { username, password });
+    try {
+        console.log("LOGIN TRY:", { username, password });
 
-    const cache = UserCache.getInstance();
-    await cache.ensureInitialized();
+        const cache = UserCache.getInstance();
+        await cache.ensureInitialized();
 
-    await loadDoc();
-    const sheet = doc.sheetsByTitle['USUARIOS'];
+        await loadDoc();
 
-    if (!sheet) throw new Error('Hoja USUARIOS no encontrada');
+        const sheet = doc.sheetsByTitle['USUARIOS'];
+        if (!sheet) throw new Error('Hoja USUARIOS no encontrada');
 
-    const rows = await sheet.getRows();
+        const rows = await sheet.getRows();
 
-    // 🔥 DEBUG ROWS
-    rows.forEach(row => {
-        console.log("ROW:", {
-            USER: row.get('USER'),
-            CLAVE: row.get('CLAVE'),
+        // 🔍 NORMALIZACIÓN
+        const inputUser = username.trim().toLowerCase();
+        const inputPass = password.trim();
+
+        // 🔥 BUSQUEDA ROBUSTA
+        const userRow = rows.find(row => {
+            const sheetUser = row.get('USER')?.toString().trim().toLowerCase();
+            const sheetPass = row.get('CLAVE')?.toString().trim();
+
+            return sheetUser === inputUser && sheetPass === inputPass;
         });
-    });
 
-    // ✅ FIX CON TRIM
-    const userRow = rows.find(row =>
-        row.get('USER')?.toString().trim() === username.trim() &&
-        row.get('CLAVE')?.toString().trim() === password.trim()
-    );
+        console.log("USER FOUND:", userRow ? "YES" : "NO");
 
-    console.log("USER FOUND:", userRow ? "YES" : "NO");
+        if (!userRow) return null;
 
-    if (!userRow) return null;
+        // 🔐 TOKEN
+        const newToken =
+            Math.random().toString(36).substring(2) +
+            Date.now().toString(36);
 
-    // 🔐 TOKEN
-    const newToken =
-        Math.random().toString(36).substring(2) +
-        Date.now().toString(36);
+        userRow.set('SESSION_TOKEN', newToken);
+        await userRow.save();
 
-    userRow.set('SESSION_TOKEN', newToken);
-    await userRow.save();
+        await cache.refresh();
 
-    await cache.refresh();
+        return {
+            DNI: userRow.get('DNI'),
+            'NOMBRES COMPLETOS': userRow.get('NOMBRES COMPLETOS'),
+            USER: userRow.get('USER'),
+            CLAVE: userRow.get('CLAVE'),
+            ROL: userRow.get('ROL') as any,
+            CARGO: userRow.get('CARGO'),
+            SUPERVISOR: userRow.get('SUPERVISOR'),
+            TELEFONO: userRow.get('TELEFONO'),
+            SESSION_TOKEN: newToken,
+            FOTO: userRow.get('FOTO'),
+        };
 
-    return {
-        DNI: userRow.get('DNI'),
-        'NOMBRES COMPLETOS': userRow.get('NOMBRES COMPLETOS'),
-        USER: userRow.get('USER'),
-        CLAVE: userRow.get('CLAVE'),
-        ROL: userRow.get('ROL') as any,
-        CARGO: userRow.get('CARGO'),
-        SUPERVISOR: userRow.get('SUPERVISOR'),
-        TELEFONO: userRow.get('TELEFONO'),
-        SESSION_TOKEN: newToken,
-        FOTO: userRow.get('FOTO'),
-    };
+    } catch (error) {
+        console.error("LOGIN ERROR:", error);
+        return null;
+    }
 }
 
 // 🔐 VALIDAR TOKEN
@@ -143,6 +146,7 @@ export async function checkSessionToken(
 // 📊 BASE DISPONIBLE
 export async function getAvailableBase(limit: number = 10, assignedUser: string) {
     await loadDoc();
+
     const sheet = doc.sheetsByTitle['BASE'];
     if (!sheet) throw new Error('Hoja BASE no encontrada');
 
@@ -169,6 +173,7 @@ export async function getAvailableBase(limit: number = 10, assignedUser: string)
 // 📊 DATA ASIGNADA
 export async function getAssignedData(user: string) {
     await loadDoc();
+
     const sheet = doc.sheetsByTitle['BASE'];
     if (!sheet) return [];
 
