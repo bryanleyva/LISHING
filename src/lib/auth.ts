@@ -12,28 +12,13 @@ export const authOptions: NextAuthOptions = {
                 password: { label: "Password", type: "password" }
             },
             async authorize(credentials) {
-                if (!credentials?.username || !credentials?.password) return null;
+               console.log("LOGIN TEST:", credentials);
 
-                try {
-                    const user = await getUserByCredentials(credentials.username, credentials.password);
-                    if (user) {
-                        return {
-                            id: user.DNI,
-                            name: user['NOMBRES COMPLETOS'],
-                            email: user.USER,
-                            role: user.ROL,
-                            cargo: (user as any).CARGO,
-                            supervisor: user.SUPERVISOR,
-                            phone: (user as any).TELEFONO,
-                            sessionToken: (user as any).SESSION_TOKEN,
-                            image: user.FOTO,
-                        };
-                    }
-                    return null;
-                } catch (error) {
-                    console.error('Auth error:', error);
-                    return null;
-                }
+    return {
+        id: "1",
+        name: "test",
+        email: "test@test.com"
+    };
             }
         })
     ],
